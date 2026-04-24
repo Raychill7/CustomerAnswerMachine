@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>电商客服 Agent 演示</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fb; }
+      .wrap { max-width: 800px; margin: 40px auto; padding: 20px; }
+      .card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+      .title { margin: 0 0 12px; }
+      .hint { color: #666; margin-bottom: 16px; }
+      .chat-log { min-height: 300px; max-height: 420px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px; padding: 12px; background: #fafafa; }
+      .msg { margin: 10px 0; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; }
+      .user { background: #dff2ff; }
+      .bot { background: #eef7e8; }
+      .row { margin-top: 12px; display: flex; gap: 8px; }
+      input { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #ccc; }
+      button { padding: 10px 16px; border: none; border-radius: 8px; cursor: pointer; background: #2563eb; color: #fff; }
+      .meta { margin-top: 10px; color: #555; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h2 class="title">电商客服 Agent 在线演示</h2>
+        <div class="hint">示例提问：我想申请退货 / 帮我查一下物流 / 我要人工客服</div>
+        <div id="chatLog" class="chat-log"></div>
+        <div class="row">
+          <input id="input" placeholder="请输入问题..." />
+          <button id="sendBtn">发送</button>
+        </div>
+        <div id="meta" class="meta"></div>
+      </div>
+    </div>
+    <script>
+      const chatLog = document.getElementById("chatLog");
+      const input = document.getElementById("input");
+      const sendBtn = document.getElementById("sendBtn");
+      const meta = document.getElementById("meta");
+
+      function appendMessage(text, cls) {
+        const el = document.createElement("div");
+        el.className = `msg ${cls}`;
+        el.innerText = text;
+        chatLog.appendChild(el);
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+
+      async function sendMessage() {
+        const text = input.value.trim();
+        if (!text) return;
+        appendMessage(`我：${text}`, "user");
+        input.value = "";
+        meta.innerText = "处理中...";
+
+        try {
+          const resp = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({
+              session_id: "web-demo-session",
+              user_id: "demo-user",
+              user_message: text
+            })
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            appendMessage(`系统错误：${JSON.stringify(data)}`, "bot");
+            meta.innerText = "请求失败";
+            return;
+          }
+          appendMessage(`客服：${data.answer}`, "bot");
+          meta.innerText = `intent=${data.intent} | confidence=${data.confidence} | tokens=${data.usage?.total_tokens ?? "-"}`;
+        } catch (err) {
+          appendMessage(`网络错误：${err}`, "bot");
+          meta.innerText = "网络异常";
+        }
+      }
+
+      sendBtn.addEventListener("click", sendMessage);
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") sendMessage();
+      });
+    </script>
+  </body>
+</html>
