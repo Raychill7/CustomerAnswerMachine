@@ -1,8 +1,11 @@
+import logging
 from typing import TypedDict
 
 from app.agent.tools import create_human_ticket, get_return_policy, query_order_status
 from app.llm.deepseek_client import DeepSeekClient
-from app.rag.retriever import SimpleRetriever
+from app.rag.retriever import RetrievedChunk, SimpleRetriever
+
+logger = logging.getLogger(__name__)
 
 
 class AgentState(TypedDict):
@@ -20,6 +23,70 @@ class CustomerServiceAgent:
     def __init__(self) -> None:
         self.retriever = SimpleRetriever()
         self.llm = DeepSeekClient()
+        self.rewrite_aliases = {
+            "报销": "发票",
+            "票据": "发票",
+            "凭证": "发票",
+            "轨迹": "物流",
+            "包裹": "快递",
+            "退钱": "退款",
+        }
+
+    @staticmethod
+    def build_trace_event(
+        session_id: str,
+        user_message: str,
+        intent: str,
+        confidence: float,
+        references: list[str],
+        retrieved_chunks: list[RetrievedChunk],
+        tool_result: dict,
+        rewritten_query: str | None = None,
+        retrieval_mode: str = "single",
+    ) -> dict:
+        return {
+            "event": "agent_trace",
+            "session_id": session_id,
+            "user_message": user_message,
+            "rewritten_query": rewritten_query,
+            "retrieval_mode": retrieval_mode,
+            "intent": intent,
+            "confidence": confidence,
+            "references": references,
+            "retrieval_debug": [
+                {
+                    "source": chunk.source,
+                    "score": round(chunk.score, 4),
+                    "content_preview": chunk.content[:80],
+                }
+                for chunk in retrieved_chunks
+            ],
+            "tool_result_keys": sorted(tool_result.keys()),
+        }
+
+    def rewrite_query(self, query: str) -> str:
+        rewritten = query
+        for original, mapped in self.rewrite_aliases.items():
+            if original in rewritten and mapped not in rewritten:
+                rewritten = f"{rewritten} {mapped}"
+        return rewritten
+
+    def retrieve_with_rewrite(
+        self, query: str, top_k: int = 3, min_score: float = 0.3
+    ) -> tuple[list[RetrievedChunk], str]:
+        rewritten_query = self.rewrite_query(query)
+        primary = self.retriever.retrieve(query, top_k=top_k, min_score=min_score)
+        if rewritten_query == query:
+            return primary, rewritten_query
+
+        rewritten = self.retriever.retrieve(rewritten_query, top_k=top_k, min_score=min_score)
+        merged: dict[str, RetrievedChunk] = {}
+        for chunk in primary + rewritten:
+            existing = merged.get(chunk.source)
+            if existing is None or chunk.score > existing.score:
+                merged[chunk.source] = chunk
+        ranked = sorted(merged.values(), key=lambda item: item.score, reverse=True)[:top_k]
+        return ranked, rewritten_query
 
     def detect_intent(self, text: str) -> tuple[str, float]:
         if any(k in text for k in ["退货", "退款", "换货"]):
@@ -36,6 +103,7 @@ class CustomerServiceAgent:
         intent, confidence = self.detect_intent(user_message)
         references: list[str] = []
         tool_result: dict = {}
+        retrieved_chunks: list[RetrievedChunk] = []
 
         if intent == "order_status":
             tool_result = query_order_status(order_id="MOCK-10001").payload
@@ -49,9 +117,32 @@ class CustomerServiceAgent:
                 user_id=user_id,
             ).payload
         else:
-            chunks = self.retriever.retrieve(user_message, top_k=2)
-            references = [c.source for c in chunks if c.score >= 0.5]
-            tool_result = {"retrieved_context": [c.content for c in chunks]}
+            retrieved_chunks, rewritten_query = self.retrieve_with_rewrite(
+                user_message, top_k=3, min_score=0.3
+            )
+            references = [c.source for c in retrieved_chunks if c.score >= 0.5]
+            tool_result = {"retrieved_context": [c.content for c in retrieved_chunks]}
+            retrieval_mode = "dual" if rewritten_query != user_message else "single"
+        if intent != "knowledge_qa":
+            rewritten_query = None
+            retrieval_mode = "single"
+
+        logger.info(
+            "agent_trace",
+            extra={
+                "trace": self.build_trace_event(
+                    session_id=session_id,
+                    user_message=user_message,
+                    intent=intent,
+                    confidence=confidence,
+                    references=references,
+                    retrieved_chunks=retrieved_chunks,
+                    tool_result=tool_result,
+                    rewritten_query=rewritten_query,
+                    retrieval_mode=retrieval_mode,
+                )
+            },
+        )
 
         sys_prompt = (
             "你是电商客服助手。请基于已知工具结果回答，"

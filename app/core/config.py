@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     postgres_dsn: str = "sqlite:///./data/app.db"
     redis_dsn: str = "redis://localhost:6379/0"
     chroma_dir: str = "./data/chroma"
+    failure_confidence_threshold: float = 0.75
+    failure_pool_default_limit: int = 50
 
 
 @lru_cache

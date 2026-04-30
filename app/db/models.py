@@ -31,3 +31,18 @@ class Ticket(Base):
     detail: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="open")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+
+
+class FailureCase(Base):
+    __tablename__ = "failure_cases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_message: Mapped[str] = mapped_column(Text)
+    intent: Mapped[str] = mapped_column(String(64))
+    confidence: Mapped[float] = mapped_column(Float)
+    answer: Mapped[str] = mapped_column(Text)
+    references_json: Mapped[str] = mapped_column(Text, default="[]")
+    fail_reasons: Mapped[str] = mapped_column(String(256))
+    status: Mapped[str] = mapped_column(String(32), default="new", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
