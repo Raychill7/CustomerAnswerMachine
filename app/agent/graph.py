@@ -47,6 +47,10 @@ class CustomerServiceAgent:
             "嗯",
             "嗯嗯",
         }
+        self.condition_display_map = {
+            "unused": "商品未使用",
+            "original_package": "保留原包装",
+        }
 
     @staticmethod
     def build_trace_event(
@@ -147,12 +151,14 @@ class CustomerServiceAgent:
             return f"订单{order_id}当前状态：未发货。您可以稍后再查，或告诉我是否需要催发。"
         return f"订单{order_id}当前状态：{status}。"
 
-    @staticmethod
-    def format_after_sales_answer(order_id: str | None, policy: dict) -> str:
+    def format_after_sales_answer(self, order_id: str | None, policy: dict) -> str:
         if not order_id:
             return "可以为您处理退货。请先提供订单号（例如 2026001），我再继续为您处理。"
         conditions = policy.get("conditions", [])
-        condition_text = "、".join(conditions) if conditions else "请保持商品完好"
+        normalized_conditions = [
+            self.condition_display_map.get(item, item) for item in conditions if isinstance(item, str)
+        ]
+        condition_text = "、".join(normalized_conditions) if normalized_conditions else "请保持商品完好"
         window_days = policy.get("window_days", 7)
         return (
             f"已收到订单{order_id}。根据当前退货规则，签收后{window_days}天内可申请退货，"

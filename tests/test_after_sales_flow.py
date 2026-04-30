@@ -38,3 +38,7 @@ async def test_after_sales_can_continue_with_order_id_only_message() -> None:
     assert state["intent"] == "after_sales_policy"
     assert state["tool_result"]["order_id"] == "2026001"
     assert "已收到订单2026001" in state["answer"]
+    assert "unused" not in state["answer"]
+    assert "original_package" not in state["answer"]
+    assert "未使用" in state["answer"]
+    assert "原包装" in state["answer"]
