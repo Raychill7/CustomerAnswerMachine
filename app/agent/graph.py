@@ -106,6 +106,10 @@ class CustomerServiceAgent:
 
     def detect_intent(self, text: str, previous_intent: str | None = None) -> tuple[str, float]:
         normalized = text.strip()
+        if self.extract_order_id(text):
+            if previous_intent == "after_sales_policy":
+                return "after_sales_policy", 0.9
+            return "order_status", 0.9
         if any(k in text for k in ["退货", "退款", "换货"]):
             return "after_sales_policy", 0.9
         if any(k in text for k in ["物流", "快递", "订单"]):
@@ -130,6 +134,31 @@ class CustomerServiceAgent:
             return None
         return match.group(0)
 
+    @staticmethod
+    def format_order_status_answer(tool_result: dict) -> str:
+        order_id = tool_result.get("order_id", "未知订单")
+        status = tool_result.get("status", "状态未知")
+        if status == "已送达":
+            return f"订单{order_id}当前状态：已送达。若商品有问题，我可以继续协助您发起售后。"
+        if status == "已发货":
+            eta = tool_result.get("eta", "请留意物流更新")
+            return f"订单{order_id}当前状态：已发货。{eta}。"
+        if status == "未发货":
+            return f"订单{order_id}当前状态：未发货。您可以稍后再查，或告诉我是否需要催发。"
+        return f"订单{order_id}当前状态：{status}。"
+
+    @staticmethod
+    def format_after_sales_answer(order_id: str | None, policy: dict) -> str:
+        if not order_id:
+            return "可以为您处理退货。请先提供订单号（例如 2026001），我再继续为您处理。"
+        conditions = policy.get("conditions", [])
+        condition_text = "、".join(conditions) if conditions else "请保持商品完好"
+        window_days = policy.get("window_days", 7)
+        return (
+            f"已收到订单{order_id}。根据当前退货规则，签收后{window_days}天内可申请退货，"
+            f"且需满足：{condition_text}。如果确认符合，我将继续为您发起退货流程。"
+        )
+
     async def run(
         self,
         session_id: str,
@@ -146,7 +175,10 @@ class CustomerServiceAgent:
             order_id = self.extract_order_id(user_message) or "2026002"
             tool_result = query_order_status(order_id=order_id).payload
         elif intent == "after_sales_policy":
-            tool_result = get_return_policy().payload
+            order_id = self.extract_order_id(user_message)
+            policy = get_return_policy().payload
+            tool_result = {"order_id": order_id, **policy}
+            answer_override = self.format_after_sales_answer(order_id=order_id, policy=policy)
         elif intent == "handoff_human":
             tool_result = create_human_ticket(
                 session_id=session_id,
@@ -181,6 +213,29 @@ class CustomerServiceAgent:
                 )
             },
         )
+
+        if intent == "order_status":
+            return AgentState(
+                session_id=session_id,
+                user_message=user_message,
+                intent=intent,
+                confidence=confidence,
+                references=references,
+                tool_result=tool_result,
+                answer=self.format_order_status_answer(tool_result),
+                usage={},
+            )
+        if intent == "after_sales_policy":
+            return AgentState(
+                session_id=session_id,
+                user_message=user_message,
+                intent=intent,
+                confidence=confidence,
+                references=references,
+                tool_result=tool_result,
+                answer=answer_override,
+                usage={},
+            )
 
         sys_prompt = (
             "你是电商客服助手。请基于已知工具结果回答，"

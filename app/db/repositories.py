@@ -132,6 +132,8 @@ def get_latest_intent(session_id: str) -> str | None:
 
 
 def get_order_status(order_id: str) -> dict | None:
+    # Ensure demo data exists even on long-lived databases.
+    seed_demo_orders()
     with Session(engine) as session:
         row = (
             session.query(Order.order_id, Order.customer_id, Order.status)
