@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.agent.graph import CustomerServiceAgent
 from app.core.config import get_settings
-from app.db.repositories import list_failure_cases, save_chat_log, save_failure_case
+from app.db.repositories import get_latest_intent, list_failure_cases, save_chat_log, save_failure_case
 from app.schemas.chat import ChatAction, ChatRequest, ChatResponse
 from app.schemas.failure_case import FailureCaseListResponse
 
@@ -27,10 +27,12 @@ def detect_failure_reasons(
 @router.post("", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
     try:
+        previous_intent = get_latest_intent(req.session_id)
         state = await agent.run(
             session_id=req.session_id,
             user_message=req.user_message,
             user_id=req.user_id,
+            previous_intent=previous_intent,
         )
         save_chat_log(
             session_id=state["session_id"],

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from app.db.repositories import get_order_status
 from app.observability.metrics import TOOL_FAILURE_COUNT
 
 
@@ -13,6 +14,17 @@ class ToolResult:
 
 
 def query_order_status(order_id: str) -> ToolResult:
+    order = get_order_status(order_id)
+    if order:
+        payload = {
+            "order_id": order["order_id"],
+            "customer_id": order["customer_id"],
+            "status": order["status"],
+        }
+        if order["status"] == "已发货":
+            payload["eta"] = "预计2天内送达"
+        return ToolResult(name="query_order_status", ok=True, payload=payload)
+
     return ToolResult(
         name="query_order_status",
         ok=True,
