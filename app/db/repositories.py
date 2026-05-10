@@ -131,6 +131,25 @@ def get_latest_intent(session_id: str) -> str | None:
         return row[0]
 
 
+def get_recent_chat_turns(session_id: str, limit: int) -> list[dict[str, str]]:
+    """Return chronological (oldest-first) turns for prompt construction."""
+    if limit <= 0:
+        return []
+    with Session(engine) as session:
+        rows = (
+            session.query(ChatLog)
+            .filter(ChatLog.session_id == session_id)
+            .order_by(ChatLog.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+    ordered = list(reversed(rows))
+    return [
+        {"user_message": row.user_message, "answer": row.answer, "intent": row.intent}
+        for row in ordered
+    ]
+
+
 def get_order_status(order_id: str) -> dict | None:
     # Ensure demo data exists even on long-lived databases.
     seed_demo_orders()

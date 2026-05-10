@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -24,6 +25,11 @@ class Settings(BaseSettings):
     chroma_dir: str = "./data/chroma"
     failure_confidence_threshold: float = 0.75
     failure_pool_default_limit: int = 50
+
+    chat_history_max_turns: int = 12
+    chat_history_max_chars: int = 8000
+    chat_history_filter: Literal["all", "intent_related"] = "all"
+    chat_history_db_fetch_limit: int = 48
 
 
 @lru_cache

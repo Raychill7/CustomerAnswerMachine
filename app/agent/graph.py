@@ -2,7 +2,9 @@ import logging
 import re
 from typing import TypedDict
 
+from app.agent.chat_history import ChatTurn, prepare_history_turns
 from app.agent.tools import create_human_ticket, get_return_policy, query_order_status
+from app.core.config import get_settings
 from app.llm.deepseek_client import DeepSeekClient
 from app.rag.retriever import RetrievedChunk, SimpleRetriever
 
@@ -22,6 +24,7 @@ class AgentState(TypedDict):
 
 class CustomerServiceAgent:
     def __init__(self) -> None:
+        self.settings = get_settings()
         self.retriever = SimpleRetriever()
         self.llm = DeepSeekClient()
         self.rewrite_aliases = {
@@ -171,6 +174,7 @@ class CustomerServiceAgent:
         user_message: str,
         user_id: str | None = None,
         previous_intent: str | None = None,
+        chat_history: list[ChatTurn] | None = None,
     ) -> AgentState:
         intent, confidence = self.detect_intent(user_message, previous_intent=previous_intent)
         references: list[str] = []
@@ -246,6 +250,7 @@ class CustomerServiceAgent:
         sys_prompt = (
             "你是电商客服助手。请基于已知工具结果回答，"
             "回答应简洁、礼貌、可执行；当信息不充分时请给出下一步建议。"
+            "若提供了更早的对话记录，请保持前后说法一致并承接用户关切。"
         )
         user_payload = (
             f"用户问题: {user_message}\n"
@@ -253,12 +258,20 @@ class CustomerServiceAgent:
             f"工具结果: {tool_result}\n"
             f"参考来源: {references}"
         )
-        result = await self.llm.chat(
-            [
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_payload},
-            ]
+        history_turns = prepare_history_turns(
+            list(chat_history or []),
+            current_intent=intent,
+            previous_intent=previous_intent,
+            filter_mode=self.settings.chat_history_filter,
+            max_turns=self.settings.chat_history_max_turns,
+            max_chars=self.settings.chat_history_max_chars,
         )
+        messages: list[dict[str, str]] = [{"role": "system", "content": sys_prompt}]
+        for turn in history_turns:
+            messages.append({"role": "user", "content": turn["user_message"]})
+            messages.append({"role": "assistant", "content": turn["answer"]})
+        messages.append({"role": "user", "content": user_payload})
+        result = await self.llm.chat(messages)
         answer = result["choices"][0]["message"]["content"]
         usage = result.get("usage", {})
         return AgentState(

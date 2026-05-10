@@ -9,12 +9,19 @@
 - 健康检查与指标：`GET /healthz`、`GET /metrics`
 - 网页演示入口：`GET /`（内置聊天页面）
 - 意图识别路由：物流、退换货、发票、人工转接、知识问答
+- 会话记忆：按 `session_id` 从 `chat_logs` 读取最近若干轮对话，注入 LLM（知识问答、发票检索、转人工等走模型的路径），支持轮数/字符上限与按意图过滤
 - DeepSeek API 客户端封装（重试、超时、错误映射）
 - 检索链路埋点：记录检索来源、分数、改写 query 与检索模式
 - 混合检索：关键词匹配 + 轻量语义相似融合打分
 - Query Rewrite：原 query + 改写 query 双路召回融合
 - 阈值过滤与重排增强：减少低相关上下文注入噪声
 - 内置演示订单数据：1 个客户 + 3 个订单（`2026001/2026002/2026003`）
+
+## 最近更新（会话记忆）
+- **多轮上下文**：`POST /chat` 在调用 DeepSeek 前，将同一 `session_id` 下近期 user/assistant 轮次拼入 `messages`（system → 历史 → 当前轮结构化 payload）。
+- **成本控制**：`chat_history_max_turns` 限制轮数，`chat_history_max_chars` 限制历史文本体量；`chat_history_db_fetch_limit` 控制单次从库中读取条数。
+- **可选意图过滤**：`chat_history_filter=intent_related` 时优先保留与当前/上一轮意图一致的记录，无命中时回退最近少量轮次，避免无关历史噪声。
+- **实现位置**：`app/db/repositories.py`（`get_recent_chat_turns`）、`app/agent/chat_history.py`（裁剪与过滤）、`app/agent/graph.py`（组装 messages）。
 
 ## 最近更新（RAG 精进）
 - **检索可观测性**：增加 `agent_trace` 结构化埋点，输出 `retrieval_debug`、`rewritten_query`、`retrieval_mode`。
@@ -88,10 +95,19 @@ Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8000/chat/failure-cases?sta
 - `FAILURE_CONFIDENCE_THRESHOLD`（默认 `0.75`）
 - `FAILURE_POOL_DEFAULT_LIMIT`（默认 `50`）
 
+## 会话记忆配置
+走 LLM 的回复会带上同一 `session_id` 的近期对话；订单状态、纯退换货模板等**不调用模型**的路径不受此项影响。
+
+可在 `.env` 中配置（亦对应 `app/core/config.py` 中的字段名）：
+- `CHAT_HISTORY_MAX_TURNS`（默认 `12`）：注入模型的最多历史轮数（每轮含一条 user + 一条 assistant）。
+- `CHAT_HISTORY_MAX_CHARS`（默认 `8000`）：历史对话文本（不含 system 与当前轮 payload）的字符上限，从更早轮次向前裁剪。
+- `CHAT_HISTORY_FILTER`（默认 `all`）：`all` 使用裁剪后的全部意图历史；`intent_related` 按当前/上一轮意图筛选后再裁剪。
+- `CHAT_HISTORY_DB_FETCH_LIMIT`（默认 `48`）：每次请求从 `chat_logs` 最多读取的行数，供内存侧筛选与截断。
+
 ## 项目结构
 - `app/main.py`: FastAPI 入口
 - `app/api/`: Chat/Ticket/Health API
-- `app/agent/`: 意图识别与工具编排
+- `app/agent/`: 意图识别与工具编排（含 `chat_history.py` 会话裁剪）
 - `app/llm/`: DeepSeek 客户端
 - `app/rag/`: 检索与索引构建
 - `app/db/`: 数据模型与仓储
