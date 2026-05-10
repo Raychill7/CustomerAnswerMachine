@@ -5,10 +5,23 @@ from typing import TypedDict
 from app.agent.chat_history import ChatTurn, prepare_history_turns
 from app.agent.tools import create_human_ticket, get_return_policy, query_order_status
 from app.core.config import get_settings
+from app.db.repositories import list_orders_for_customer
 from app.llm.deepseek_client import DeepSeekClient
 from app.rag.retriever import RetrievedChunk, SimpleRetriever
 
 logger = logging.getLogger(__name__)
+
+# Demo chat user_id → seeded customer (see README「演示订单数据」).
+_CHAT_USER_TO_DEMO_CUSTOMER: dict[str, str] = {
+    "demo-user": "CUST-2026-DEMO",
+    "u1": "CUST-2026-DEMO",
+}
+
+
+def demo_customer_id_for_chat_user(user_id: str | None) -> str | None:
+    if not user_id:
+        return None
+    return _CHAT_USER_TO_DEMO_CUSTOMER.get(user_id)
 
 
 class AgentState(TypedDict):
@@ -134,6 +147,16 @@ class CustomerServiceAgent:
             return previous_intent, 0.82
         return "knowledge_qa", 0.7
 
+    def order_lookup_requires_identifier(self, text: str) -> bool:
+        """True when the user is asking to look up their order but did not give an order id."""
+        if self.extract_order_id(text):
+            return False
+        if "我的订单" in text:
+            return True
+        if any(p in text for p in ("查询订单", "订单查询", "查订单", "订单状态")):
+            return True
+        return bool(re.search(r"查.{0,6}订单|订单.{0,6}查", text))
+
     @staticmethod
     def extract_order_id(text: str) -> str | None:
         match = re.search(r"20\d{5}", text)
@@ -143,6 +166,18 @@ class CustomerServiceAgent:
 
     @staticmethod
     def format_order_status_answer(tool_result: dict) -> str:
+        if tool_result.get("needs_order_id"):
+            return (
+                "查询具体订单状态需要提供订单号（例如 2026001）。"
+                "请在订单详情页复制订单号后发给我，或说明您已登录演示账号以便我列出关联订单。"
+            )
+        order_list = tool_result.get("order_list")
+        if isinstance(order_list, list) and order_list:
+            parts = [f"{item['order_id']}（{item['status']}）" for item in order_list]
+            return "当前账号关联的订单：" + "、".join(parts) + "。请直接回复要查询的订单号。"
+        if tool_result.get("not_found"):
+            oid = tool_result.get("order_id", "")
+            return f"未找到订单 {oid}，请核对订单号是否正确。"
         order_id = tool_result.get("order_id", "未知订单")
         status = tool_result.get("status", "状态未知")
         if status == "已送达":
@@ -180,10 +215,28 @@ class CustomerServiceAgent:
         references: list[str] = []
         tool_result: dict = {}
         retrieved_chunks: list[RetrievedChunk] = []
+        rewritten_query: str | None = None
+        retrieval_mode = "single"
 
         if intent == "order_status":
-            order_id = self.extract_order_id(user_message) or "2026002"
-            tool_result = query_order_status(order_id=order_id).payload
+            order_id = self.extract_order_id(user_message)
+            if order_id:
+                res = query_order_status(order_id=order_id)
+                tool_result = dict(res.payload)
+            elif self.order_lookup_requires_identifier(user_message):
+                demo_cust = demo_customer_id_for_chat_user(user_id)
+                if demo_cust:
+                    orders = list_orders_for_customer(demo_cust)
+                    tool_result = {"order_list": orders} if orders else {"needs_order_id": True}
+                else:
+                    tool_result = {"needs_order_id": True}
+            else:
+                retrieved_chunks, rewritten_query = self.retrieve_with_rewrite(
+                    user_message, top_k=3, min_score=0.3
+                )
+                references = [c.source for c in retrieved_chunks if c.score >= 0.5]
+                tool_result = {"retrieved_context": [c.content for c in retrieved_chunks]}
+                retrieval_mode = "dual" if rewritten_query != user_message else "single"
         elif intent == "after_sales_policy":
             order_id = self.extract_order_id(user_message)
             policy = get_return_policy().payload
@@ -203,7 +256,8 @@ class CustomerServiceAgent:
             references = [c.source for c in retrieved_chunks if c.score >= 0.5]
             tool_result = {"retrieved_context": [c.content for c in retrieved_chunks]}
             retrieval_mode = "dual" if rewritten_query != user_message else "single"
-        if intent != "knowledge_qa":
+        order_status_faq_rag = intent == "order_status" and "retrieved_context" in tool_result
+        if intent != "knowledge_qa" and not order_status_faq_rag:
             rewritten_query = None
             retrieval_mode = "single"
 
@@ -224,7 +278,7 @@ class CustomerServiceAgent:
             },
         )
 
-        if intent == "order_status":
+        if intent == "order_status" and "retrieved_context" not in tool_result:
             return AgentState(
                 session_id=session_id,
                 user_message=user_message,

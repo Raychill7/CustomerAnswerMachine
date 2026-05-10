@@ -27,11 +27,10 @@ def query_order_status(order_id: str) -> ToolResult:
 
     return ToolResult(
         name="query_order_status",
-        ok=True,
+        ok=False,
         payload={
             "order_id": order_id,
-            "status": "in_transit",
-            "eta": "2 days",
+            "not_found": True,
         },
     )
 

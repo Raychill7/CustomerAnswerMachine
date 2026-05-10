@@ -150,6 +150,20 @@ def get_recent_chat_turns(session_id: str, limit: int) -> list[dict[str, str]]:
     ]
 
 
+def list_orders_for_customer(customer_id: str, limit: int = 20) -> list[dict[str, str]]:
+    """Return recent orders for a customer (newest first)."""
+    seed_demo_orders()
+    with Session(engine) as session:
+        rows = (
+            session.query(Order.order_id, Order.status)
+            .filter(Order.customer_id == customer_id)
+            .order_by(Order.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [{"order_id": row[0], "status": row[1]} for row in rows]
+
+
 def get_order_status(order_id: str) -> dict | None:
     # Ensure demo data exists even on long-lived databases.
     seed_demo_orders()

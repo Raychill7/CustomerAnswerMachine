@@ -1,4 +1,4 @@
-from app.db.repositories import get_order_status, init_db
+from app.db.repositories import get_order_status, init_db, list_orders_for_customer
 
 
 def test_demo_orders_seeded_in_db() -> None:
@@ -13,3 +13,10 @@ def test_demo_orders_seeded_in_db() -> None:
     assert delivered["status"] == "已送达"
     assert shipped["status"] == "已发货"
     assert pending["status"] == "未发货"
+
+
+def test_list_orders_for_demo_customer() -> None:
+    init_db()
+    rows = list_orders_for_customer("CUST-2026-DEMO")
+    ids = {r["order_id"] for r in rows}
+    assert ids == {"2026001", "2026002", "2026003"}
