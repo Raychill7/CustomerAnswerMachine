@@ -21,5 +21,6 @@ def test_compute_metrics_includes_retrieval_and_citation_metrics() -> None:
 
     assert "intent_accuracy" in metrics
     assert "recall_at_3" in metrics
+    assert "recall_at_3_with_rewrite" in metrics
     assert "citation_precision" in metrics
     assert "by_difficulty" in metrics

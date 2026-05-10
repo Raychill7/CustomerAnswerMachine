@@ -15,9 +15,12 @@ def compute_metrics(data: list[dict], agent: CustomerServiceAgent, retrieval_k: 
     total = len(data)
     intent_hit = 0
     recall_hit = 0
+    recall_with_rewrite_hit = 0
     citation_hit = 0
     citation_total = 0
     by_difficulty: dict[str, dict[str, int]] = {}
+
+    labeled_rows = sum(1 for row in data if row.get("expected_sources"))
 
     for row in data:
         query = row["query"]
@@ -29,6 +32,9 @@ def compute_metrics(data: list[dict], agent: CustomerServiceAgent, retrieval_k: 
         chunks = agent.retriever.retrieve(query, top_k=retrieval_k)
         retrieved_sources = [chunk.source for chunk in chunks]
         references = [chunk.source for chunk in chunks if chunk.score >= 0.5]
+
+        chunks_rw, _ = agent.retrieve_with_rewrite(query, top_k=retrieval_k, min_score=0.3)
+        retrieved_sources_rw = [chunk.source for chunk in chunks_rw]
 
         if intent == expected_intent:
             intent_hit += 1
@@ -42,6 +48,8 @@ def compute_metrics(data: list[dict], agent: CustomerServiceAgent, retrieval_k: 
         if expected_sources:
             matched = len(set(expected_sources) & set(retrieved_sources))
             recall_hit += 1 if matched > 0 else 0
+            matched_rw = len(set(expected_sources) & set(retrieved_sources_rw))
+            recall_with_rewrite_hit += 1 if matched_rw > 0 else 0
             citation_hit += len(set(expected_sources) & set(references))
             citation_total += len(set(references))
 
@@ -58,7 +66,8 @@ def compute_metrics(data: list[dict], agent: CustomerServiceAgent, retrieval_k: 
         "total": total,
         "intent_hit": intent_hit,
         "intent_accuracy": _safe_div(intent_hit, total),
-        f"recall_at_{retrieval_k}": _safe_div(recall_hit, sum(1 for row in data if row.get("expected_sources"))),
+        f"recall_at_{retrieval_k}": _safe_div(recall_hit, labeled_rows),
+        f"recall_at_{retrieval_k}_with_rewrite": _safe_div(recall_with_rewrite_hit, labeled_rows),
         "citation_precision": _safe_div(citation_hit, citation_total),
         "by_difficulty": by_difficulty_metrics,
     }
